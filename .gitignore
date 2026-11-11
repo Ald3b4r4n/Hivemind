@@ -11,3 +11,4 @@ agents.yaml
 .claude/
 .agents/
 .mcp.json
+.codex-remote-attachments/
