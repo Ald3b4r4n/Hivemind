@@ -18,6 +18,8 @@ const root = mkdtempSync(join(tmpdir(), 'hivemind-real-'));
 const repo = join(root, 'repo');
 const home = join(root, 'home');
 const openCodeModel = process.env.HIVEMIND_TEST_OPENCODE_MODEL;
+const correction = process.argv[2] === 'p002';
+const codexWrite = process.argv[2] === 'codex-write';
 if (!openCodeModel) throw new Error('Configure HIVEMIND_TEST_OPENCODE_MODEL com um modelo já autorizado.');
 const output = data => console.log(JSON.stringify(data));
 const listener = createServer();
@@ -40,6 +42,8 @@ git(root, 'init', '-b', 'main', repo);
 writeFileSync(join(repo, 'README.md'), '# Fixture\n\nHivemind acceptance repository.\n');
 git(repo, 'add', '.');
 git(repo, '-c', 'user.name=Hivemind Test', '-c', 'user.email=test@localhost', 'commit', '-m', 'fixture');
+const initialHead = git(repo, 'rev-parse', 'HEAD');
+const initialIndex = git(repo, 'write-tree');
 const service = await serve(home, config);
 writeFileSync(join(home, 'agents.yaml'), stringify(config));
 const client = await connect(port, secret(home, 'access'));
@@ -67,41 +71,104 @@ function reportTask(task) {
   output({ task: task.id, state: task.state, agent: task.agent, effort: attempt?.effort,
     commit: attempt?.evidence?.commit, files: attempt?.evidence?.files, error: attempt?.error, note: task.mode === 'write' && !attempt?.evidence?.commit ? attempt?.evidence?.output.slice(-1500) : undefined });
 }
+async function cliOptions(task) {
+  const logs = await call('get_logs', { ...task, limit: 100 });
+  return logs.flatMap(entry => {
+    try {
+      const parsed = JSON.parse(entry.message);
+      return parsed.event === 'cli-options' ? [parsed] : [];
+    } catch { return []; }
+  });
+}
 let nativeMode;
 try {
   output(await call('list_harnesses'));
   output(await call('list_agents', { profile: 'demo' }));
-  nativeMode = process.argv[2];
+  nativeMode = correction || codexWrite ? undefined : process.argv[2];
   if (!nativeMode) {
     const { job, jobKey } = await call('create_job', { profile: 'demo', owner: 'test-driver', objective: 'Analyze, improve and review the README fixture.' });
     const auth = { jobId: job.id, jobKey };
-    await call('decompose_job', { ...auth, tasks: [
-      { id: 'architecture', title: 'Analyze', role: 'architect', instructions: 'Read README.md, explain its purpose and suggest adding a Usage section.' },
-      { id: 'delivery', title: 'Implement', role: 'implementer', mode: 'write', instructions: 'Append a Usage section to README.md with a sentence containing Hivemind. Use tools to edit the file. Do not change anything else.' },
-      { id: 'quality-smoke', title: 'Inspect', role: 'tester', instructions: 'Read README.md and report its current title.' },
-    ] });
-    const names = ['architecture', 'delivery', 'quality-smoke'];
-    for (const taskId of names) {
-      try {
-        await call('assign_task', { ...auth, taskId });
-        await runTask({ ...auth, taskId });
-      } catch (error) {
-        output({ task: taskId, state: 'BLOCKED', error: redact(error.message) });
-        await call('cancel_task', { ...auth, taskId });
+    if (codexWrite) {
+      const taskId = 'codex-write';
+      const task = { ...auth, taskId };
+      await call('decompose_job', { ...auth, tasks: [
+        { id: taskId, title: 'Probe de escrita', role: 'tester', mode: 'write', instructions: 'Use a ferramenta de edição para acrescentar P002_CODEX_WRITE ao README.md. Confirme se houve alteração real e informe qualquer bloqueio explícito de ferramenta.' },
+      ] });
+      await call('assign_task', { ...task, agent: 'quality' });
+      await runTask(task);
+      const result = await waitTask(task);
+      reportTask(result);
+      output({ cliOptions: await cliOptions(task) });
+      await call('finalize_job', { ...auth, report: 'Probe Codex em sandbox workspace-write.' });
+      assert.equal(result.state, 'COMPLETED', result.attempts.at(-1)?.error);
+      assert.match(result.attempts.at(-1).evidence.diff, /^\+.*P002_CODEX_WRITE/m);
+    } else {
+      await call('decompose_job', { ...auth, tasks: [
+        { id: 'architecture', title: 'Analyze', role: 'architect', instructions: 'Read README.md, explain its purpose and suggest adding a Usage section.' },
+        { id: 'delivery', title: 'Implement', role: 'implementer', mode: 'write', instructions: 'Append a Usage section to README.md with a sentence containing Hivemind. Use tools to edit the file. Do not add a verification marker in this first pass. Do not change anything else.', ...(correction ? { dependsOn: ['architecture'] } : {}) },
+        { id: 'quality-smoke', title: 'Inspect', role: 'tester', instructions: 'Read README.md and report its current title.' },
+      ] });
+      const names = ['architecture', 'delivery', 'quality-smoke'];
+      for (const taskId of names) {
+        try {
+          await call('assign_task', { ...auth, taskId });
+          await runTask({ ...auth, taskId });
+        } catch (error) {
+          output({ task: taskId, state: 'BLOCKED', error: redact(error.message) });
+          await call('cancel_task', { ...auth, taskId });
+        }
       }
+      const tasks = await Promise.all(names.map(taskId => waitTask({ ...auth, taskId })));
+      tasks.forEach(reportTask);
+      const delivered = tasks.find(task => task.id === 'delivery');
+      if (delivered.attempts.at(-1)?.evidence?.files.includes('README.md') && tasks.at(-1).state === 'COMPLETED') {
+        await call('review_task', { ...auth, taskId: 'delivery', reviewId: 'review', instructions: correction ? 'Review the supplied Git diff. The acceptance criteria require the exact string P002_VERIFIED in the new Usage section. If absent, explicitly report the missing marker as a required correction and include the exact verdict P002_CORRECTION_REQUIRED. Cite P002_VERIFIED.' : 'Review the supplied Git diff and report the wording of the Usage section.' });
+        await runTask({ ...auth, taskId: 'review' });
+        tasks.push(await waitTask({ ...auth, taskId: 'review' }));
+        reportTask(tasks.at(-1));
+        if (correction) {
+          const review = tasks.at(-1);
+          assert.equal(review.state, 'COMPLETED');
+          const feedback = review.attempts.at(-1).evidence.output;
+          assert.match(feedback, /P002_VERIFIED/);
+          assert.match(feedback, /P002_CORRECTION_REQUIRED/);
+          assert.doesNotMatch(delivered.attempts.at(-1).evidence.diff, /P002_VERIFIED/);
+          const repair = { ...auth, taskId: 'correction' };
+          await call('decompose_job', { ...auth, tasks: [
+            { id: repair.taskId, title: 'Apply reviewer feedback', role: 'implementer', mode: 'write', dependsOn: ['review'],
+              instructions: 'Apply the recorded review feedback. Add the exact marker P002_VERIFIED to the Usage section. Preserve other content.' },
+          ] });
+          await call('assign_task', { ...repair, effort: 'high' });
+          await runTask(repair);
+          const repaired = await waitTask(repair);
+          tasks.push(repaired);
+          reportTask(repaired);
+          assert.equal(repaired.state, 'COMPLETED');
+          assert.match(repaired.attempts.at(-1).evidence.diff, /^\+.*P002_VERIFIED/m);
+          const finalReview = { ...auth, taskId: 'review-final' };
+          await call('review_task', { ...repair, reviewId: finalReview.taskId,
+            instructions: 'Verify the correction in the supplied diff. Report whether the added line now contains P002_VERIFIED. If present, include the exact verdict P002_REVIEW_PASS.' });
+          await runTask(finalReview);
+          const verification = await waitTask(finalReview);
+          tasks.push(verification);
+          reportTask(verification);
+          assert.equal(verification.state, 'COMPLETED');
+          assert.match(verification.attempts.at(-1).evidence.output, /P002_VERIFIED/);
+          assert.match(verification.attempts.at(-1).evidence.output, /P002_REVIEW_PASS/);
+          output({ feedback: 'P002_CORRECTION_REQUIRED', verification: 'P002_REVIEW_PASS' });
+          for (const task of tasks) {
+            const entries = await cliOptions({ ...auth, taskId: task.id });
+            assert.equal(entries.length, 1);
+            output({ task: task.id, cliOptions: entries[0] });
+          }
+          assert.deepEqual((await cliOptions(repair))[0].argv.filter((value, index, args) =>
+            value === '--effort' || args[index - 1] === '--effort'), ['--effort', 'high']);
+        }
+      }
+      const finalized = await call('finalize_job', { ...auth, report: 'Acceptance fixture. See task evidence.' });
+      output({ job: finalized.id, owner: finalized.owner, state: finalized.state });
+      if (finalized.state !== 'COMPLETED' || !delivered.attempts.at(-1)?.evidence?.commit || tasks.length !== (correction ? 6 : 4)) process.exitCode = 1;
     }
-    const tasks = await Promise.all(names.map(taskId => waitTask({ ...auth, taskId })));
-    tasks.forEach(reportTask);
-    const delivered = tasks.find(task => task.id === 'delivery');
-    if (delivered.attempts.at(-1)?.evidence?.files.includes('README.md') && tasks.at(-1).state === 'COMPLETED') {
-      await call('review_task', { ...auth, taskId: 'delivery', reviewId: 'review', instructions: 'Read README.md in this worktree. Verify that the Usage section exists and report the wording.' });
-      await runTask({ ...auth, taskId: 'review' });
-      tasks.push(await waitTask({ ...auth, taskId: 'review' }));
-      reportTask(tasks.at(-1));
-    }
-    const finalized = await call('finalize_job', { ...auth, report: 'Acceptance fixture. See task evidence.' });
-    output({ job: finalized.id, owner: finalized.owner, state: finalized.state });
-    if (finalized.state !== 'COMPLETED' || !delivered.attempts.at(-1)?.evidence?.commit || tasks.length !== 4) process.exitCode = 1;
   } else {
     const isCodex = nativeMode === 'codex';
     if (!isCodex && nativeMode !== 'opencode') throw new Error('Modo nativo: codex ou opencode.');
@@ -136,6 +203,8 @@ try {
       })), final: diagnostic(items.filter(event => event.item?.type === 'agent_message' && event.type === 'item.completed').at(-1)?.item.text ?? '') });
     if (result.code !== 0) output({ diagnostic: redact((result.stdout || result.stderr).slice(-1300)) });
   }
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), initialHead);
+  assert.equal(git(repo, 'write-tree'), initialIndex);
   assert.match(readFileSync(join(repo, 'README.md'), 'utf8'), /Hivemind acceptance repository/);
   assert(!readFileSync(join(repo, 'README.md'), 'utf8').includes('## Usage'));
 } finally {

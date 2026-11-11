@@ -109,6 +109,7 @@ const specs: CliSpec[] = [
     help: ['exec', '--help'], markers: ['--json', '--sandbox'],
     args: req => ['exec', '--json', '--ephemeral', '--color', 'never', '--sandbox',
       req.mode === 'read' ? 'read-only' : 'workspace-write', ...(!req.agent.provider ? ['--ignore-user-config'] : []),
+      ...(process.platform === 'win32' && !req.agent.provider ? ['--enable', 'prefer_mxc'] : []),
       ...codexOptions(req), '--', req.prompt],
     coord: req => [...codexOptions(req), '--sandbox', 'read-only', '--', req.prompt],
     output: codexOutput,
@@ -223,7 +224,19 @@ function createAdapter(spec: CliSpec, config: Config): Adapter {
       if (spec.name === 'opencode' && req.agent.model && (!req.agent.model.includes('/') || (req.agent.provider && !req.agent.model.startsWith(req.agent.provider + '/')))) {
         throw new Fault('MODEL_INVALID', 'OpenCode requer um modelo no formato provider/model.');
       }
-      const command = invocation(file, args(req), { ...environment(settings?.forwardEnv), ...spec.env?.(req) });
+      const cliArgs = args(req);
+      // Only record options before the positional prompt and omit arbitrary configuration.
+      const flags = cliArgs.slice(0, cliArgs.indexOf('--'));
+      const option = (name: string) => {
+        const index = flags.indexOf(name);
+        return index < 0 ? [] : [name, flags[index + 1]];
+      };
+      const reasoning = flags.find(value => value.startsWith('model_reasoning_effort='));
+      req.log(JSON.stringify({
+        event: 'cli-options', harness: spec.name,
+        argv: [...option('--model'), ...option('--effort'), ...option('--sandbox'), ...option('--enable'), ...(reasoning ? ['-c', reasoning] : [])],
+      }));
+      const command = invocation(file, cliArgs, { ...environment(settings?.forwardEnv), ...spec.env?.(req) });
       const result = await run(command, req.cwd, req.signal, req.timeout);
       if (result.stderr.trim()) req.log(result.stderr.trim().slice(-12_000));
       if (result.code !== 0) {
