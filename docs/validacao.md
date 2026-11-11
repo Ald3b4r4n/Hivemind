@@ -37,3 +37,5 @@ O primeiro comando de teste usa um cliente SDK para orquestrar e valida arquitet
 O cliente SDK finalizou o job com a análise do OpenCode, o commit do Claude Code e a revisão do Codex. A branch principal do repositório de teste permaneceu intacta. As execuções usaram os logins existentes e um modelo de OpenCode identificado como gratuito para a fixture.
 
 No aceite nativo, o Codex leu a skill pelo recurso MCP, criou e finalizou o job, delegou a arquitetura ao OpenCode e a implementação ao Claude Code. O revisor Codex apontou ajustes que o Claude Code entregou em um segundo commit. A revisão final foi estática sobre o diff. O OpenCode também concluiu um job independente como líder, usando o mesmo núcleo.
+
+A validação da Preview 2 está no [Gate P002](p002.md). Os resultados acima registram a Preview 1.

@@ -17,7 +17,7 @@ No Codex não interativo, a aprovação de ferramentas MCP é controlada pela co
 
 ## Execução
 
-- Codex CLI usa `codex exec` com sandbox `read-only` ou `workspace-write` conforme a tarefa. A escrita depende da configuração efetiva de sandbox e das políticas da máquina. O adapter padrão usa a sessão existente e ignora a configuração pessoal do CLI para executar tarefas. Um provedor personalizado definido no perfil usa a configuração local do Codex.
+- Codex CLI usa `codex exec` com sandbox `read-only` ou `workspace-write` conforme a tarefa. No Windows, o adapter padrão prefere o sandbox nativo MXC quando disponível e permitido pelo Codex. O modo workspace-write e as políticas efetivas continuam aplicáveis. O adapter padrão usa a sessão existente e ignora a configuração pessoal do CLI para executar tarefas. Um provedor personalizado definido no perfil usa a configuração local do Codex.
 - Claude Code usa modo de impressão, desativa hooks por configuração e seleciona ferramentas de leitura ou edição para a execução. A autenticação normal do CLI permanece disponível. Tarefas de edição usam o modo nativo `acceptEdits`.
 - OpenCode 2 usa `opencode run --standalone` com permissões de leitura ou edição. Selecione um modelo habilitado da sua conta. Use um modelo com preço zero ou local se precisar garantir custo incremental zero. `doctor` detecta a CLI e o catálogo disponível.
 - Antigravity tem instalação como cliente MCP e skill. Para versões da IDE que mantêm MCP no gerenciador do aplicativo, abra a configuração bruta nesse gerenciador e incorpore `mcpServers.hivemind`. A primeira versão reserva a execução programática aos três adapters CLI acima.
