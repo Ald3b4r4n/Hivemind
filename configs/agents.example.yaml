@@ -1,0 +1,23 @@
+port: 17844
+concurrency: 2
+agents:
+  design:
+    harness: claude-code
+    roles: [architect]
+    capabilities: [analysis]
+  delivery:
+    harness: codex
+    roles: [implementer]
+  quality:
+    harness: opencode
+    roles: [reviewer, tester]
+    capabilities: [analysis]
+    # model: provider/model
+profiles:
+  meu-projeto:
+    repository: 'D:\Projetos\MeuProjeto'
+    agents: [design, delivery, quality]
+    approval: required
+    allowWrite: true
+    timeoutMs: 300000
+    maxAttempts: 2

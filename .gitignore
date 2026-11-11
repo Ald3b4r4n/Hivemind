@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.hivemind/
+agents.yaml
+.env*
+*.sqlite*
+*.log
+*.tgz
+.opencode/
+.claude/
+.agents/
+.mcp.json
