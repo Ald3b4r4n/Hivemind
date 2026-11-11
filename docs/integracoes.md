@@ -1,14 +1,17 @@
 # Configurar um cliente MCP
 
-Rode `hivemind serve` e, no projeto de trabalho, rode o instalador correspondente. Os quatro clientes usam a mesma skill e podem chamar os mesmos contratos de coordenação. O instalador preserva um arquivo de skill já presente e imprime a configuração a aplicar.
+Rode hivemind start. No diretório do projeto, rode hivemind install <cliente> . para ver a entrada proposta e hivemind install <cliente> . --apply para gravá-la.
 
-| Cliente | Comando | Aplicação |
+| Cliente | Nome no instalador | Arquivo e verificação |
 | --- | --- | --- |
-| Codex | `hivemind install codex .` | Execute o comando `codex mcp add` retornado. Confirme com `codex mcp list` e abra nova sessão. |
-| Claude Code | `hivemind install claude-code .` | Execute o comando `claude mcp add` retornado e confirme com `claude mcp list` ou `/mcp`. |
-| OpenCode 2 | `hivemind install opencode .` | Incorpore a entrada em `mcp.servers` no `opencode.json` ou JSONC existente. Confirme com `opencode mcp list`. |
-| Google Antigravity | `hivemind install antigravity .` | Incorpore a entrada `mcpServers.hivemind` no arquivo retornado ou no gerenciador MCP da IDE. Recarregue os servidores. |
+| Codex | codex | config.toml em CODEX_HOME ou ~/.codex. Confirme com codex mcp get hivemind e abra uma nova sessão. |
+| Claude Code | claude-code | .mcp.json no projeto. Confirme com claude mcp get hivemind. Revise a aprovação do servidor na sessão interativa, se solicitada. |
+| OpenCode 2 | opencode | opencode.json ou opencode.jsonc no projeto, sob mcp.servers. Confirme pelo gerenciador MCP do OpenCode. |
+| Google Antigravity | antigravity | .agents/mcp_config.json no projeto. Abra o workspace e verifique a ferramenta hivemind_status no painel do agente. |
 
+O instalador edita apenas a entrada proposta e guarda o original em backups no diretório de dados. Configurações ambíguas ou entradas personalizadas com o mesmo nome são sinalizadas. A prévia mostra a entrada proposta para aplicação manual. Use --apply --repair somente para corrigir um caminho antigo reconhecido de instalação npm em JSON ou JSONC. No Codex, revise uma entrada existente diferente diretamente no TOML. Caminhos de executável e diretório de dados são específicos desta máquina.
+
+Use --apply --update-skill para atualizar uma cópia oficial antiga. Skills personalizadas ficam no lugar. Rode hivemind doctor . para verificar se a versão da skill coincide com a canônica do pacote.
 A entrada STDIO usa o Node diretamente e aponta para `hivemind bridge` com o diretório de dados. Clientes HTTP podem usar `http://127.0.0.1:17844/mcp`, ajustando a porta, com cabeçalho `Authorization: Bearer` e o valor de `access.token`. Guarde esse valor na configuração local do cliente. Em Codex, por exemplo, use `bearer_token_env_var` para apontar para uma variável de ambiente. A chave administrativa fica em `admin.token` e é usada pela CLI para aprovar execuções e editar agentes.
 
 Para iniciar um coordenador pelo cliente, peça “Carregue a skill hivemind-orchestrator, liste os perfis e coordene o job no perfil escolhido”. Em clientes que não carregam a skill automaticamente, leia o recurso `hivemind://skills/orchestrator`.
