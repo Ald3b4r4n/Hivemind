@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { fork } from 'node:child_process';
+import { once } from 'node:events';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,7 +80,10 @@ async function fixture(t, approval = 'delegated') {
         await delay(prompt.includes('WAIT_MARKER') ? 5000 : 200, undefined, { signal });
         if (prompt.includes('FAIL_MARKER')) throw new Error('private error');
         if (prompt.includes('REVIEW_MARKER')) assert.equal(readFileSync(join(cwd, 'README.md'), 'utf8').trim(), 'modified');
-        if (mode === 'write') writeFileSync(join(cwd, 'README.md'), 'modified\n');
+        if (mode === 'write') {
+          const content = prompt.includes('CONFLICT_LEFT') ? 'left' : prompt.includes('CONFLICT_RIGHT') ? 'right' : 'modified';
+          writeFileSync(join(cwd, 'README.md'), content + '\n');
+        }
         log('authorization: Bearer fake_secret_token_value');
         return 'Evidence sk-fake_secret_key_value';
       } finally { stats.active--; }
@@ -265,4 +270,165 @@ test('validação de perfis e redação', () => {
   assert.equal(redactor(['secret-fixture'])('api_key=abcdef password: more secret-fixture'), 'api_key=[REDACTED] password: [REDACTED] [REDACTED]');
   assert.throws(() => resolveEffort({ name: 'demo', efforts: () => ({ levels: {}, source: 'unknown' }) },
     { effort: 'high' }, undefined, 'normal'), { code: 'EFFORT_UNSUPPORTED' });
+});
+
+async function planTasks(fixture, definitions) {
+  const { client, create } = fixture;
+  const job = await create();
+  const auth = taskId => ({ ...job, taskId });
+  await call(client, 'decompose_job', {
+    ...job,
+    tasks: definitions.map(task => ({ title: task.id, role: 'architect', instructions: 'Inspect', ...task })),
+  });
+  for (const task of definitions) await call(client, 'assign_task', auth(task.id));
+  return { job, auth };
+}
+
+const taskState = async (client, auth, state) => until(async () => {
+  const task = await call(client, 'get_task', auth);
+  return task.state === state && task;
+});
+
+test('o limite global é respeitado entre jobs e enfileiramentos simultâneos', async t => {
+  const f = await fixture(t);
+  const a = await planTasks(f, [
+    { id: 'first', instructions: 'PARALLEL_MARKER' },
+    { id: 'second', instructions: 'PARALLEL_MARKER' },
+    { id: 'third' },
+  ]);
+  const b = await planTasks(f, [{ id: 'other' }]);
+  const executions = [a.auth('first'), a.auth('second'), a.auth('third'), b.auth('other')];
+  for (const execution of executions) await call(f.client, 'approve_task', execution);
+  await Promise.all([...executions, executions[0]].map(execution => call(f.client, 'run_task', execution)));
+  await Promise.all(executions.map(execution => taskState(f.client, execution, 'COMPLETED')));
+  assert.equal(f.stats.max, 2);
+  assert.equal(f.stats.runs, 4);
+});
+
+test('falha propaga bloqueio para toda a cadeia e preserva trabalho independente', async t => {
+  const f = await fixture(t);
+  const { job, auth } = await planTasks(f, [
+    { id: 'downstream', dependsOn: ['middle'] },
+    { id: 'middle', dependsOn: ['origin'] },
+    { id: 'origin', instructions: 'FAIL_MARKER' },
+    { id: 'independent' },
+  ]);
+  for (const id of ['downstream', 'middle', 'independent', 'origin']) await f.runTask(auth(id));
+  await taskState(f.client, auth('origin'), 'FAILED');
+  for (const id of ['middle', 'downstream']) {
+    const task = await taskState(f.client, auth(id), 'BLOCKED');
+    assert.equal(task.attempts.length, 0);
+  }
+  await taskState(f.client, auth('independent'), 'COMPLETED');
+  assert.equal((await call(f.client, 'finalize_job', { ...job, report: 'Falha registrada.' })).state, 'FAILED');
+});
+
+test('conflito Git bloqueia só a integração e preserva HEAD, índice e commits', async t => {
+  const f = await fixture(t);
+  const head = git(f.repo, 'rev-parse', 'HEAD');
+  writeFileSync(join(f.repo, 'local.txt'), 'staged fixture');
+  git(f.repo, 'add', 'local.txt');
+  const index = git(f.repo, 'write-tree');
+  const { job, auth } = await planTasks(f, [
+    { id: 'left', role: 'implementer', mode: 'write', instructions: 'CONFLICT_LEFT' },
+    { id: 'right', role: 'implementer', mode: 'write', instructions: 'CONFLICT_RIGHT' },
+    { id: 'combine', dependsOn: ['left', 'right'] },
+  ]);
+  for (const id of ['combine', 'left', 'right']) await f.runTask(auth(id));
+  const conflict = await taskState(f.client, auth('combine'), 'BLOCKED');
+  assert.match(conflict.attempts[0].error, /^GIT_CONFLICT:/);
+  for (const id of ['left', 'right']) {
+    const attempt = (await taskState(f.client, auth(id), 'COMPLETED')).attempts[0];
+    assert.equal(git(f.repo, 'rev-parse', attempt.work.branch), attempt.evidence.commit);
+  }
+  await call(f.client, 'finalize_job', { ...job, report: 'Conflito preservado.' });
+  assert.equal(git(f.repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(f.repo, 'write-tree'), index);
+  assert.equal(readFileSync(join(f.repo, 'README.md'), 'utf8'), 'original\n');
+});
+
+test('tokens de transporte e administração não concedem acesso ao job', async t => {
+  const f = await fixture(t);
+  const { job, auth } = await planTasks(f, [{ id: 'secret' }]);
+  const endpoint = 'http://127.0.0.1:' + f.config.port;
+  const access = secret(f.home, 'access');
+  const admin = secret(f.home, 'admin');
+  assert.equal((await fetch(endpoint + '/admin/jobs', { headers: { Authorization: 'Bearer ' + access } })).status, 401);
+  assert.equal((await fetch(endpoint + '/mcp', { headers: { Authorization: 'Bearer ' + admin } })).status, 401);
+  await call(f.client, 'cancel_task', { ...auth('secret'), jobKey: access }, 'JOB_NOT_FOUND');
+  await call(f.client, 'get_job', { ...job, jobKey: admin }, 'JOB_NOT_FOUND');
+  assert.equal((await call(f.client, 'get_task', auth('secret'))).state, 'PLANNED');
+});
+
+test('cancelamento na fila impede execução e permite finalizar com o cancelamento registrado', async t => {
+  const f = await fixture(t);
+  const { job, auth } = await planTasks(f, [{ id: 'dependency' }, { id: 'queued', dependsOn: ['dependency'] }]);
+  await f.runTask(auth('queued'));
+  await call(f.client, 'cancel_task', auth('queued'));
+  await call(f.client, 'cancel_task', auth('queued'));
+  await f.runTask(auth('dependency'));
+  await taskState(f.client, auth('dependency'), 'COMPLETED');
+  assert.equal((await call(f.client, 'get_task', auth('queued'))).attempts.length, 0);
+  assert.equal(f.stats.runs, 1);
+  assert.equal((await call(f.client, 'finalize_job', { ...job, report: 'Cancelamento preservado.' })).state, 'FAILED');
+});
+
+test('override de effort é isolado por tarefa e validado antes da execução', async t => {
+  const f = await fixture(t);
+  const { job, auth } = await planTasks(f, [{ id: 'normal' }, { id: 'override' }]);
+  await call(f.client, 'assign_task', { ...auth('override'), effort: 'low' });
+  await call(f.client, 'assign_task', { ...auth('override'), effort: 'max' }, 'EFFORT_UNSUPPORTED');
+  for (const id of ['normal', 'override']) await f.runTask(auth(id));
+  const normal = (await taskState(f.client, auth('normal'), 'COMPLETED')).attempts[0].effort;
+  const override = (await taskState(f.client, auth('override'), 'COMPLETED')).attempts[0].effort;
+  assert.equal(normal.requested, 'auto');
+  assert.equal(normal.native, 'm');
+  assert.equal(override.requested, 'low');
+  assert.equal(override.native, 'l');
+  assert.equal((await call(f.client, 'get_job', job)).team.design.effort, 'auto');
+});
+
+test('queda real do serviço recupera tentativas e fila sem executar de novo', async t => {
+  const f = await fixture(t);
+  const { job, auth } = await planTasks(f, [{ id: 'crash' }, { id: 'queued', dependsOn: ['crash'] }]);
+  await f.client.close();
+  await f.service.close();
+  const child = fork(new URL('./fixtures/crash-service.mjs', import.meta.url), [f.home], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+  const closed = once(child, 'close');
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await closed;
+  });
+  await Promise.race([
+    once(child, 'message', { signal: AbortSignal.timeout(10_000) }),
+    closed.then(() => assert.fail('O subprocesso encerrou antes de iniciar.')),
+  ]);
+  const remote = await connect(f.config.port, secret(f.home, 'access'));
+  try {
+    for (const id of ['queued', 'crash']) {
+      await call(remote, 'approve_task', auth(id));
+      await call(remote, 'run_task', auth(id));
+    }
+    const active = await taskState(remote, auth('crash'), 'RUNNING');
+    await until(() => existsSync(join(active.attempts[0].work.path, 'running.marker')));
+    assert.equal((await call(remote, 'get_task', auth('queued'))).state, 'QUEUED');
+    assert(child.kill('SIGKILL'));
+    await closed;
+  } finally { await remote.close(); }
+
+  const restarted = await serve(f.home, f.config, f.adapters);
+  const restored = await connect(f.config.port, secret(f.home, 'access'));
+  try {
+    const interrupted = await call(restored, 'get_task', auth('crash'));
+    assert.equal(interrupted.state, 'BLOCKED');
+    assert.match(interrupted.attempts[0].error, /reinicialização/);
+    const queued = await call(restored, 'get_task', auth('queued'));
+    assert.equal(queued.state, 'BLOCKED');
+    assert.equal(queued.attempts.length, 0);
+    assert.equal((await call(restored, 'get_job', job)).state, 'BLOCKED');
+    assert.equal(f.stats.runs, 0);
+  } finally {
+    await restored.close();
+    await restarted.close();
+  }
 });

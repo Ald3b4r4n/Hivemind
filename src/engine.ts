@@ -345,9 +345,21 @@ export class Engine {
     if (this.stopped) return;
     for (const job of this.store.all()) {
       if (job.finalized) continue;
-      for (const task of job.tasks.filter(task => task.state === 'QUEUED')) {
+      const queued = job.tasks.filter(task => task.state === 'QUEUED');
+      const blocked = new Set(job.tasks.filter(task => badDependency.includes(task.state)).map(task => task.id));
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const task of queued) {
+          if (!blocked.has(task.id) && task.dependsOn.some(id => blocked.has(id))) {
+            blocked.add(task.id);
+            changed = true;
+          }
+        }
+      }
+      for (const task of queued) {
         const deps = task.dependsOn.map(id => this.task(job, id));
-        if (deps.some(dep => badDependency.includes(dep.state))) {
+        if (blocked.has(task.id)) {
           this.store.atomic(() => {
             transition(task, 'BLOCKED');
             task.blockedByDependency = true;
