@@ -12,7 +12,9 @@ import { errorData, mcp, tools } from './mcp.js';
 import { redactor } from './redact.js';
 import { Fault, Store } from './storage.js';
 
-export const endpoint = (port: number) => 'http://127.0.0.1:' + port;
+import { endpoint, identity, lifecycleLog, removeIdentity, saveIdentity, signedIdentity, verifyStop } from './service-control.js';
+
+export { endpoint } from './service-control.js';
 function json(response: ServerResponse, status: number, data: unknown) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(data));
@@ -53,20 +55,36 @@ export async function serve(dir: string, config: Config, adapters: Map<string, A
   const access = secret(dir, 'access', true);
   const admin = secret(dir, 'admin', true);
   const redact = redactor([access, admin]);
-  const harnesses = await Promise.all([...adapters.values()].map(adapter => adapter.doctor()));
-  const store = new Store<ConstructorParameters<typeof Engine>[1] extends Store<infer Job> ? Job : never>(join(dir, 'state.sqlite'));
-  let engine: Engine;
-  try { engine = new Engine(dir, store, config, adapters, access, redact); }
-  catch (error) { store.close(); throw error; }
-  const registry = tools(engine, () => harnesses, (key, name, agent) => {
-    if (!matches(admin, key)) throw new Fault('FORBIDDEN', 'Chave administrativa inválida.');
-    return saveAgent(dir, config, name, agent, redact);
-  });
-
+  const instance = identity(dir, config.port);
+  let engine: Engine | undefined;
+  let registry: ReturnType<typeof tools> | undefined;
+  let stopping = false;
+  let published = false;
+  let shutdown: Promise<void> | undefined;
   const server = createServer(async (req, response) => {
     const origin = endpoint(config.port);
     if (req.headers.host !== new URL(origin).host || (req.headers.origin && req.headers.origin !== origin)) {
       json(response, 403, { error: { code: 'ORIGIN_DENIED' } });
+      return;
+    }
+    if (req.method === 'GET' && req.url?.startsWith('/service/identity?challenge=')) {
+      const challenge = z.uuid().safeParse(req.url.slice('/service/identity?challenge='.length));
+      if (!challenge.success) return json(response, 400, { error: { code: 'INVALID_CHALLENGE' } });
+      const pending = stopping ? { running: 0, queued: 0 } : engine?.pending();
+      return json(response, 200, signedIdentity(admin, instance, challenge.data, stopping, !registry,
+        pending?.running ?? 0, pending?.queued ?? 0));
+    }
+    if (!engine || !registry || stopping) return json(response, 503, { error: { code: 'SERVICE_UNAVAILABLE' } });
+    if (req.url === '/service/stop' && req.method === 'POST') {
+      const proof = req.headers['x-hivemind-stop'];
+      if (typeof proof !== 'string' || !verifyStop(admin, instance.instance, proof)) {
+        return json(response, 401, { error: { code: 'AUTH_REQUIRED' } });
+      }
+      const pending = engine.pending();
+      if (pending.running || pending.queued) return json(response, 409, { error: { code: 'SERVICE_BUSY' }, ...pending });
+      stopping = true;
+      json(response, 202, { state: 'stopping' });
+      void close().catch(() => { lifecycleLog(dir, 'stop-failed'); process.exitCode = 1; });
       return;
     }
     const isMcp = req.url === '/mcp';
@@ -82,8 +100,9 @@ export async function serve(dir: string, config: Config, adapters: Map<string, A
           return;
         }
         const input = await body(req);
+        if (stopping) return json(response, 503, { error: { code: 'SERVICE_UNAVAILABLE' } });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-        const server = mcp(registry);
+        const server = mcp(registry, () => !stopping);
         try {
           await server.connect(transport);
           await transport.handleRequest(req, response, input);
@@ -110,6 +129,16 @@ export async function serve(dir: string, config: Config, adapters: Map<string, A
     }
   });
   server.requestTimeout = 15_000;
+  const close = () => shutdown ??= (async () => {
+    stopping = true;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await engine?.close();
+    if (published) {
+      removeIdentity(dir, instance.instance);
+      lifecycleLog(dir, 'stopped');
+    }
+  })();
+
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
@@ -118,13 +147,23 @@ export async function serve(dir: string, config: Config, adapters: Map<string, A
         resolve();
       });
     });
+    const harnesses = await Promise.all([...adapters.values()].map(adapter => adapter.doctor()));
+    const store = new Store<ConstructorParameters<typeof Engine>[1] extends Store<infer Job> ? Job : never>(join(dir, 'state.sqlite'));
+    try { engine = new Engine(dir, store, config, adapters, access, redact); }
+    catch (error) { store.close(); throw error; }
+    registry = tools(engine, () => harnesses, (key, name, agent) => {
+      if (!matches(admin, key)) throw new Fault('FORBIDDEN', 'Chave administrativa inválida.');
+      return saveAgent(dir, config, name, agent, redact);
+    });
+    saveIdentity(dir, instance);
+    published = true;
+    lifecycleLog(dir, 'started');
   } catch (error) {
-    await engine.close();
+    const code = (error as NodeJS.ErrnoException).code;
+    if (server.listening) await close();
+    // A concurrent start losing the bind must not overwrite the winner's log.
+    if (code !== 'EADDRINUSE') lifecycleLog(dir, 'start-failed', code === 'ERR_SQLITE_ERROR' ? 'sqlite' : 'startup');
     throw error;
   }
-  let shutdown: Promise<void> | undefined;
-  return {
-    url: endpoint(config.port) + '/mcp',
-    close: () => shutdown ??= new Promise<void>(resolve => server.close(() => resolve())).then(() => engine.close()),
-  };
+  return { url: endpoint(config.port) + '/mcp', close };
 }

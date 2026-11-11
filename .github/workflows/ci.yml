@@ -21,3 +21,5 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      - run: npm pack
+      - run: npm run test:package -- hivemind-orchestrator-0.1.0-preview.3.tgz

@@ -11,14 +11,14 @@ Requisitos: Node.js 24, Git 2.45+ e pelo menos um harness instalado para executa
 Para instalar o pacote da pré-release:
 
 ```powershell
-npm install -g https://github.com/Ald3b4r4n/Hivemind/releases/download/v0.1.0-preview.2/hivemind-orchestrator-0.1.0-preview.2.tgz
+npm install -g https://github.com/Ald3b4r4n/Hivemind/releases/download/v0.1.0-preview.3/hivemind-orchestrator-0.1.0-preview.3.tgz
 hivemind init
 ```
 
 Para instalar pelo código-fonte:
 
 ```powershell
-git clone https://github.com/Ald3b4r4n/Hivemind.git
+git clone --branch v0.1.0-preview.3 https://github.com/Ald3b4r4n/Hivemind.git
 cd Hivemind
 npm ci
 npm run build
@@ -30,10 +30,10 @@ Edite `$env:USERPROFILE\.hivemind\agents.yaml` e aponte o perfil para a raiz de 
 
 ```powershell
 hivemind doctor
-hivemind serve
+hivemind start
 ```
 
-Em outro terminal, rode `hivemind status`, `hivemind profiles` ou `hivemind agents meu-projeto`. Configure seu cliente MCP com `hivemind install <harness> <diretório-do-projeto>`. A CLI copia a skill e imprime o comando ou trecho de configuração para revisão.
+Rode `hivemind status` para verificar o residente. No projeto, veja a prévia com `hivemind install <harness> .` e aplique com `hivemind install <harness> . --apply`. Use `hivemind doctor .` para conferir serviço, conexão, configuração e skill.
 
 No cliente MCP, peça:
 
@@ -63,6 +63,7 @@ Os valores do exemplo dependem do catálogo da CLI. Consulte `hivemind agents`, 
 
 Use `hivemind_assign_task` com `effort` para sobrescrever apenas uma tarefa. Para salvar uma definição, edite o YAML com o serviço parado, use `hivemind configure-agent <id> <arquivo-do-agente.yaml>` ou a ferramenta administrativa `hivemind_configure_agent`. Jobs existentes têm uma cópia da equipe. Para abrir um coordenador com modelo, effort e instruções definidos, configure o papel `orchestrator`, instale seu MCP e execute `hivemind coordinate <perfil> <agente> "<objetivo>"`.
 
+- [Operação, atualização e rollback](docs/p003.md)
 - [Integrações de Codex, Claude Code, OpenCode e Antigravity](docs/integracoes.md)
 - [Arquitetura, contratos e estados](docs/arquitetura.md)
 - [Testes e aceite com CLIs reais](docs/validacao.md)
