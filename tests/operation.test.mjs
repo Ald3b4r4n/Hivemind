@@ -73,8 +73,8 @@ async function call(client, name, args = {}) {
   assert(!response.isError, JSON.stringify(response.content));
   return JSON.parse(response.content[0].text);
 }
-async function createJob(client) {
-  const { job, jobKey } = await call(client, 'create_job', { profile: 'fixture', owner: 'test', objective: 'Inspect fixture' });
+async function createJob(client, profile = 'fixture') {
+  const { job, jobKey } = await call(client, 'create_job', { profile, owner: 'test', objective: 'Inspect fixture' });
   const auth = { jobId: job.id, jobKey };
   await call(client, 'decompose_job', { ...auth, tasks: [{ id: 'inspect', title: 'Inspect', instructions: 'Inspect', role: 'architect' }] });
   return auth;
@@ -85,7 +85,11 @@ test('start concorrente, dois clientes, reconexão, restart e persistência em c
   initRepo(f.repo);
   const port = await freePort();
   const configPath = join(f.home, 'agents.yaml');
-  write(configPath, stringify(config(f, port)));
+  const settings = config(f, port);
+  for (const approval of ['delegated', 'unattended']) {
+    settings.profiles[approval] = { ...settings.profiles.fixture, approval };
+  }
+  write(configPath, stringify(settings));
   const stdio = new Client({ name: 'p003-stdio', version: '1' });
   t.after(() => stdio.close());
   await stdio.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'bridge', '--home', f.home] }));
@@ -99,11 +103,15 @@ test('start concorrente, dois clientes, reconexão, restart e persistência em c
   const http = await connect(port, token);
   try {
     const auth = await createJob(http);
+    const delegated = await createJob(http, 'delegated');
+    const unattended = await createJob(http, 'unattended');
     assert.equal((await call(stdio, 'get_job', auth)).state, 'PLANNED');
     const restarted = await f.command('restart');
     assert.notEqual(restarted.identity.instance, first.identity.instance);
     assert.equal((await call(stdio, 'get_job', auth)).state, 'PLANNED');
     assert.equal((await call(http, 'get_job', auth)).policy.approval, 'required');
+    assert.equal((await call(http, 'get_job', delegated)).policy.approval, 'delegated');
+    assert.equal((await call(http, 'get_job', unattended)).policy.approval, 'unattended');
     assert.equal(secret(f.home, 'access'), token);
     assert.equal(readFileSync(configPath, 'utf8'), before);
     const doctor = await f.command('doctor', f.repo);
