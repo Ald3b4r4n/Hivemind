@@ -63,7 +63,7 @@ async function main() {
       break;
     }
     case 'bridge':
-      await bridge(config.port, secret(dir, 'access'));
+      await bridge(() => ({ port: loadConfig(dir).port, token: secret(dir, 'access') }));
       break;
     case 'start':
       print(await startService(dir, config.port));

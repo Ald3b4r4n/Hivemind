@@ -59,6 +59,7 @@ export async function serve(dir: string, config: Config, adapters: Map<string, A
   let engine: Engine | undefined;
   let registry: ReturnType<typeof tools> | undefined;
   let stopping = false;
+  let published = false;
   let shutdown: Promise<void> | undefined;
   const server = createServer(async (req, response) => {
     const origin = endpoint(config.port);
@@ -132,8 +133,10 @@ export async function serve(dir: string, config: Config, adapters: Map<string, A
     stopping = true;
     await new Promise<void>(resolve => server.close(() => resolve()));
     await engine?.close();
-    removeIdentity(dir, instance.instance);
-    lifecycleLog(dir, 'stopped');
+    if (published) {
+      removeIdentity(dir, instance.instance);
+      lifecycleLog(dir, 'stopped');
+    }
   })();
 
   try {
@@ -153,6 +156,7 @@ export async function serve(dir: string, config: Config, adapters: Map<string, A
       return saveAgent(dir, config, name, agent, redact);
     });
     saveIdentity(dir, instance);
+    published = true;
     lifecycleLog(dir, 'started');
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;

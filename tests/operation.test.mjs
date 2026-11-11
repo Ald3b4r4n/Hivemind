@@ -86,6 +86,10 @@ test('start concorrente, dois clientes, reconexão, restart e persistência em c
   const port = await freePort();
   const configPath = join(f.home, 'agents.yaml');
   write(configPath, stringify(config(f, port)));
+  const stdio = new Client({ name: 'p003-stdio', version: '1' });
+  t.after(() => stdio.close());
+  await stdio.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'bridge', '--home', f.home] }));
+  await assert.rejects(stdio.listTools());
   const [first, second] = await Promise.all([f.command('start'), f.command('start')]);
   assert.equal(first.state, 'active');
   assert.equal(second.identity.instance, first.identity.instance);
@@ -93,9 +97,7 @@ test('start concorrente, dois clientes, reconexão, restart e persistência em c
   const token = secret(f.home, 'access');
   const before = readFileSync(configPath, 'utf8');
   const http = await connect(port, token);
-  const stdio = new Client({ name: 'p003-stdio', version: '1' });
   try {
-    await stdio.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'bridge', '--home', f.home] }));
     const auth = await createJob(http);
     assert.equal((await call(stdio, 'get_job', auth)).state, 'PLANNED');
     const restarted = await f.command('restart');

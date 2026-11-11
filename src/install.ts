@@ -88,7 +88,8 @@ type Layout = ReturnType<typeof layout>;
 
 function inheritedConflict(harness: Harness, root: string, layout: Layout) {
   const user = homedir();
-  const folders = [join(process.env.XDG_CONFIG_HOME ?? join(user, '.config'), 'opencode')];
+  const folders = [join(process.env.XDG_CONFIG_HOME ?? join(user, '.config'), 'opencode'),
+    ...(process.env.OPENCODE_CONFIG_DIR ? [resolve(process.env.OPENCODE_CONFIG_DIR)] : [])];
   const paths = harness === 'opencode' ? [
     ...folders.flatMap(dir => [join(dir, 'opencode.json'), join(dir, 'opencode.jsonc')]),
     ...(process.env.OPENCODE_CONFIG ? [resolve(process.env.OPENCODE_CONFIG)] : []),
