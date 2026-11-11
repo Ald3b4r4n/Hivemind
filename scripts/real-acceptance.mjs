@@ -111,11 +111,11 @@ try {
     const file = isCodex ? executable('codex', '@openai/codex/bin/codex.js') : executable('opencode', '@opencode/cli/bin/opencode.exe');
     if (!file) throw new Error('CLI indisponível.');
     const prompt = isCodex
-      ? 'Leia a skill pelo recurso MCP hivemind://skills/orchestrator e use as ferramentas MCP do servidor hivemind. Perfil demo, owner codex. Analise este projeto, implemente uma melhoria e revise a entrega usando três agentes diferentes. Crie job, planeje architecture (architect, leia README e sugira Usage) e delivery (implementer, write, depende de architecture, acrescente seção Usage no README.md). Atribua, aprove no modo delegated e execute ambos. Aguarde resultados de fato, depois use review_task com quality para ler e revisar o commit de delivery. Aprove e execute a revisão. Finalize com relatório e evidências. Use o MCP para executar as ações do fluxo.'
+      ? 'Leia a skill pelo recurso MCP hivemind://skills/orchestrator e use as ferramentas MCP do servidor hivemind. Perfil demo, owner codex. Analise este projeto, implemente uma melhoria e revise a entrega usando três agentes diferentes. Crie job, planeje architecture (architect, leia README e sugira Usage) e delivery (implementer, write, depende de architecture, acrescente seção Usage no README.md). Atribua, aprove no modo delegated e execute ambos. Aguarde resultados de fato, depois use review_task com quality e instrua: Revise o diff registrado pelo Hivemind, cite a frase de Usage e indique se a alteração atende ao pedido. A revisão do diff é a verificação pedida para esta fixture. Aprove e execute a revisão. Com a revisão concluída, finalize com relatório e evidências. Use o MCP para executar as ações do fluxo.'
       : 'Use as ferramentas MCP do servidor hivemind. Crie um job com perfil demo, owner opencode e objetivo "Liderança OpenCode". Crie uma tarefa de leitura com papel tester para examinar README.md. Atribua a architecture, aprove, execute e aguarde o resultado. Finalize o job com relatório real. Mantenha a chave no contexto e informe o ID.';
     let command;
     if (isCodex) {
-      command = invocation(file, ['exec', '--json', '--ephemeral', '--color', 'never', '--sandbox', 'read-only', '--ignore-user-config', '--model', 'gpt-6.1-sol',
+      command = invocation(file, ['exec', '--json', '--ephemeral', '--color', 'never', '--sandbox', 'read-only', '--ignore-user-config', '--model', process.env.HIVEMIND_TEST_CODEX_COORDINATOR_MODEL ?? 'gpt-6.1-sol',
         '-c', 'mcp_servers.hivemind.command=' + JSON.stringify(process.execPath),
         '-c', 'mcp_servers.hivemind.args=' + JSON.stringify(args),
         '-c', 'mcp_servers.hivemind.default_tools_approval_mode="approve"',

@@ -1,6 +1,11 @@
 port: 17844
 concurrency: 2
 agents:
+  coordinator:
+    harness: codex
+    roles: [orchestrator]
+    effort: auto
+    instructions: 'Coordene pelo MCP e confirme as evidências de revisão.'
   design:
     harness: claude-code
     roles: [architect]
@@ -16,7 +21,7 @@ agents:
 profiles:
   meu-projeto:
     repository: 'D:\Projetos\MeuProjeto'
-    agents: [design, delivery, quality]
+    agents: [coordinator, design, delivery, quality]
     approval: required
     allowWrite: true
     timeoutMs: 300000

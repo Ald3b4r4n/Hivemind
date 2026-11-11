@@ -29,9 +29,11 @@ O primeiro comando de teste usa um cliente SDK para orquestrar e valida arquitet
 
 | Harness | Resultado | Evidência |
 | --- | --- | --- |
-| Codex CLI 0.166.0 | PASS em leitura e revisão | Executor com `gpt-6.1-sol`, effort `low`. A escrita com Codex ficou bloqueada pela política local de sandbox. |
+| Codex CLI 0.166.0 | PASS como coordenador e revisor | Executor com `gpt-6.1-sol`, effort `low`. A escrita com Codex ficou bloqueada pela política local de sandbox. |
 | Claude Code 2.1.292 | PASS como executor | Implementou a mudança de README em worktree e produziu commit com `claude-sonnet-4-6`, effort `low`. |
 | OpenCode 2.2.6 | PASS como executor e coordenador | Analisou a fixture com `opencode-go/beam-free#low` e finalizou um job separado como cliente MCP. |
 | Google Antigravity | NOT TESTED | IDE detectada. Instalação da skill e configuração do cliente documentadas. |
 
 O cliente SDK finalizou o job com a análise do OpenCode, o commit do Claude Code e a revisão do Codex. A branch principal do repositório de teste permaneceu intacta. As execuções usaram os logins existentes e um modelo de OpenCode identificado como gratuito para a fixture.
+
+No aceite nativo, o Codex leu a skill pelo recurso MCP, criou e finalizou o job, delegou a arquitetura ao OpenCode e a implementação ao Claude Code. O revisor Codex apontou ajustes que o Claude Code entregou em um segundo commit. A revisão final foi estática sobre o diff. O OpenCode também concluiu um job independente como líder, usando o mesmo núcleo.

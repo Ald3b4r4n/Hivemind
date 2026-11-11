@@ -6,7 +6,16 @@ Licença MIT. A infraestrutura roda na sua máquina. Cada CLI usa a autenticaç�
 
 ## Instalação no Windows
 
-Requisitos: Node.js 24, Git 2.45+ e pelo menos um harness instalado para executar tarefas. Para instalar pelo código-fonte:
+Requisitos: Node.js 24, Git 2.45+ e pelo menos um harness instalado para executar tarefas.
+
+Para instalar o pacote da pré-release:
+
+```powershell
+npm install -g https://github.com/Ald3b4r4n/Hivemind/releases/download/v0.1.0-preview.1/hivemind-orchestrator-0.1.0-preview.1.tgz
+hivemind init
+```
+
+Para instalar pelo código-fonte:
 
 ```powershell
 git clone https://github.com/Ald3b4r4n/Hivemind.git
