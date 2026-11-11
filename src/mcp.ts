@@ -1,3 +1,4 @@
+import { version } from './version.js';
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -64,7 +65,7 @@ export function errorData(error: unknown) {
 }
 
 export function mcp(registry: Record<string, Tool>) {
-  const server = new McpServer({ name: 'hivemind', version: '0.1.0-preview.1' });
+  const server = new McpServer({ name: 'hivemind', version });
   server.registerResource('hivemind-orchestrator', 'hivemind://skills/orchestrator', {
     title: 'Skill Hivemind Orchestrator', mimeType: 'text/markdown',
   }, uri => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: readFileSync(skill, 'utf8') }] }));

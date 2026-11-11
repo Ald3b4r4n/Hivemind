@@ -11,7 +11,7 @@ Requisitos: Node.js 24, Git 2.45+ e pelo menos um harness instalado para executa
 Para instalar o pacote da pré-release:
 
 ```powershell
-npm install -g https://github.com/Ald3b4r4n/Hivemind/releases/download/v0.1.0-preview.1/hivemind-orchestrator-0.1.0-preview.1.tgz
+npm install -g https://github.com/Ald3b4r4n/Hivemind/releases/download/v0.1.0-preview.2/hivemind-orchestrator-0.1.0-preview.2.tgz
 hivemind init
 ```
 

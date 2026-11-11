@@ -1,6 +1,6 @@
 {
   "name": "hivemind-orchestrator",
-  "version": "0.1.0-preview.1",
+  "version": "0.1.0-preview.2",
   "description": "Multi-Harness Agent Orchestrator",
   "license": "MIT",
   "type": "module",
@@ -22,7 +22,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests",
     "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
-    "test:real": "npm run build && node scripts/real-acceptance.mjs"
+    "test:real": "npm run build && node scripts/real-acceptance.mjs",
+    "test:upgrade": "node scripts/windows-upgrade.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -31,8 +32,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "typescript": "~5.9.0",
     "eslint": "^9.0.0",
+    "typescript": "~5.9.0",
     "typescript-eslint": "^8.0.0"
   }
 }
