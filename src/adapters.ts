@@ -22,6 +22,7 @@ export interface Adapter {
   name: string;
   availability(): boolean;
   doctor(): Promise<unknown>;
+  authenticate?: () => Promise<string>;
   efforts(agent: Agent): { levels: Levels; source: string };
   execute?: (request: Execution) => Promise<string>;
   coordinate?: (request: Execution) => Promise<void>;
@@ -216,6 +217,20 @@ function createAdapter(spec: CliSpec, config: Config): Adapter {
       };
     },
   };
+  if (spec.name === 'codex' || spec.name === 'claude-code') {
+    adapter.authenticate = async () => {
+      if (!file || !existsSync(file)) return 'unavailable';
+      try {
+        const result = await inspect(spec.name === 'codex' ? ['login', 'status'] : ['auth', 'status']);
+        if (spec.name === 'codex') {
+          if (result.code === 0) return 'authenticated';
+          return /not logged in/i.test(result.stdout + result.stderr) ? 'not-authenticated' : 'error';
+        }
+        const value = JSON.parse(result.stdout) as { loggedIn?: boolean };
+        return value.loggedIn === true ? 'authenticated' : value.loggedIn === false ? 'not-authenticated' : 'error';
+      } catch { return 'error'; }
+    };
+  }
   if (spec.args && spec.output) {
     const args = spec.args;
     const output = spec.output;

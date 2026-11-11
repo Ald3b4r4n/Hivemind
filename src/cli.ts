@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFileSync, constants, mkdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, constants, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -8,8 +8,9 @@ import { createAdapters, resolveEffort } from './adapters.js';
 import { bridge, connect } from './bridge.js';
 import { agentSchema, complexity, configSchema, dataDir, id, loadConfig, secret } from './config.js';
 import { git, repository } from './git.js';
-import { install } from './install.js';
+import { clientNames, install } from './install.js';
 import { serve, endpoint } from './server.js';
+import { version } from './version.js';
 import { serviceStatus, startService, stopService } from './service-control.js';
 
 const [command, ...flags] = process.argv.slice(2);
@@ -99,7 +100,24 @@ async function main() {
       break;
     case 'doctor': {
       const adapters = createAdapters(config);
-      const reports = await Promise.all([...adapters.values()].map(adapter => adapter.doctor()));
+      const status = await serviceStatus(dir, config.port);
+      let mcp: { status: string; serverVersion?: string; protocol?: string; tools?: number } = {
+        status: status.state === 'inactive' ? 'unavailable' : 'not-tested',
+      };
+      if (status.state === 'active') {
+        let client: Awaited<ReturnType<typeof connect>> | undefined;
+        try {
+          client = await connect(status.port, secret(dir, 'access'));
+          const catalog = await client.listTools(undefined, { timeout: 3000 });
+          mcp = { status: 'reachable', serverVersion: client.getServerVersion()?.version,
+            protocol: status.identity.protocol, tools: catalog.tools.length };
+        } catch { mcp = { status: 'error' }; }
+        finally { await client?.close(); }
+      }
+      const reports = await Promise.all([...adapters.values()].map(async adapter => ({
+        harness: adapter.name, detection: await adapter.doctor(),
+        authentication: await adapter.authenticate?.() ?? 'not-tested',
+      })));
       let gitVersion: string | undefined;
       try { gitVersion = git(process.cwd(), '--version'); } catch { /* report absence */ }
       const profiles = Object.entries(config.profiles).map(([id, profile]) => {
@@ -114,12 +132,32 @@ async function main() {
           return { id, effortSupport: adapter.efforts(agent), resolved };
         } catch (error) { return { id, error: (error as Error).message }; }
       });
-      print({ node: process.version, git: gitVersion, profiles, harnesses: reports, agents });
+      const clients = clientNames.map(name => {
+        const report = install(name, flags[0] ?? process.cwd(), dir);
+        return { harness: name, detected: report.detected, config: report.config, skill: report.skillStatus,
+          skillVersion: report.skillVersion, canonicalSkillVersion: report.canonicalSkillVersion };
+      });
+      print({ version, node: process.version, git: gitVersion, service: status, mcp,
+        configuration: configError ? { state: 'error', detail: configError }
+          : { state: existsSync(join(dir, 'agents.yaml')) ? 'valid' : 'missing' },
+        profiles, harnesses: reports, agents, clients });
       break;
     }
-    case 'install':
-      print(install(flags[0], flags[1] ?? process.cwd(), dir));
+    case 'install': {
+      const [harness, ...args] = flags;
+      const switches = args.filter(arg => arg.startsWith('--'));
+      const paths = args.filter(arg => !arg.startsWith('--'));
+      if (paths.length > 1 || switches.some(arg => !['--apply', '--dry-run', '--update-skill', '--repair'].includes(arg)) ||
+          switches.includes('--apply') && switches.includes('--dry-run')) throw new Error('Opções de instalação inválidas.');
+      const result = install(harness, paths[0] ?? process.cwd(), dir, {
+        apply: switches.includes('--apply'), updateSkill: switches.includes('--update-skill'), repair: switches.includes('--repair'),
+      });
+      print(result);
+      if (result.applied && [result.config.status, result.skillStatus.status].some(state => ['error', 'conflict', 'manual'].includes(state))) {
+        process.exitCode = 1;
+      }
       break;
+    }
     case 'coordinate': {
       const [profileId, agentId, objective] = flags;
       const profile = Object.hasOwn(config.profiles, profileId) ? config.profiles[profileId] : undefined;

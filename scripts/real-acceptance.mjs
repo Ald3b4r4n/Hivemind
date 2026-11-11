@@ -172,7 +172,7 @@ try {
   } else {
     const isCodex = nativeMode === 'codex';
     if (!isCodex && nativeMode !== 'opencode') throw new Error('Modo nativo: codex ou opencode.');
-    install(nativeMode, repo, home);
+    install(nativeMode, repo, home, { apply: true, skillOnly: true });
     const entry = resolve('dist/cli.js');
     const args = [entry, 'bridge', '--home', home];
     const file = isCodex ? executable('codex', '@openai/codex/bin/codex.js') : executable('opencode', '@opencode/cli/bin/opencode.exe');
