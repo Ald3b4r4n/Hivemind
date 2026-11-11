@@ -473,6 +473,12 @@ export class Engine {
       this.store.save(current);
     });
   }
+  pending() {
+    return {
+      running: this.active.size,
+      queued: this.store.all().reduce((count, job) => count + job.tasks.filter(task => task.state === 'QUEUED').length, 0),
+    };
+  }
   async close() {
     this.stopped = true;
     for (const item of this.active.values()) item.controller.abort();

@@ -64,7 +64,7 @@ export function errorData(error: unknown) {
     : { code: 'INTERNAL_ERROR', message: 'Falha interna. Consulte o operador local.' };
 }
 
-export function mcp(registry: Record<string, Tool>) {
+export function mcp(registry: Record<string, Tool>, available = () => true) {
   const server = new McpServer({ name: 'hivemind', version });
   server.registerResource('hivemind-orchestrator', 'hivemind://skills/orchestrator', {
     title: 'Skill Hivemind Orchestrator', mimeType: 'text/markdown',
@@ -74,6 +74,7 @@ export function mcp(registry: Record<string, Tool>) {
     server.registerTool(name, { description: entry.description, inputSchema: entry.inputSchema,
       annotations: { readOnlyHint: readOnly.has(name.slice('hivemind_'.length)), openWorldHint: name === 'hivemind_run_task' } }, input => {
       try {
+        if (!available()) throw new Fault('SERVICE_UNAVAILABLE', 'O serviço está encerrando.');
         const data = entry.run(input);
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
       } catch (error) {

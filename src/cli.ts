@@ -6,16 +6,25 @@ import { z } from 'zod';
 import { parse } from 'yaml';
 import { createAdapters, resolveEffort } from './adapters.js';
 import { bridge, connect } from './bridge.js';
-import { agentSchema, complexity, dataDir, id, loadConfig, secret } from './config.js';
+import { agentSchema, complexity, configSchema, dataDir, id, loadConfig, secret } from './config.js';
 import { git, repository } from './git.js';
 import { install } from './install.js';
 import { serve, endpoint } from './server.js';
+import { serviceStatus, startService, stopService } from './service-control.js';
 
 const [command, ...flags] = process.argv.slice(2);
 const print = (value: unknown) => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
 async function main() {
   const dir = flags[0] === '--home' && flags[1] ? resolve(flags.splice(0, 2)[1]) : dataDir();
-  const config = loadConfig(dir);
+  let configError: string | undefined;
+  const config = (() => {
+    try { return loadConfig(dir); }
+    catch {
+      if (!['doctor', 'status', 'stop'].includes(command)) throw new Error('agents.yaml inválido. Use hivemind doctor.');
+      configError = 'agents.yaml inválido ou inacessível.';
+      return configSchema.parse({});
+    }
+  })();
   async function admin(action: string, input?: unknown) {
     const response = await fetch(endpoint(config.port) + '/admin/' + action, {
       method: input ? 'POST' : 'GET',
@@ -55,9 +64,21 @@ async function main() {
     case 'bridge':
       await bridge(config.port, secret(dir, 'access'));
       break;
-    case 'status':
-      await query('status');
+    case 'start':
+      print(await startService(dir, config.port));
       break;
+    case 'stop':
+      print(await stopService(dir, config.port));
+      break;
+    case 'restart':
+      await stopService(dir, config.port);
+      print(await startService(dir, config.port));
+      break;
+    case 'status': {
+      const status = await serviceStatus(dir, config.port);
+      print({ service: 'hivemind', ...status, configError });
+      break;
+    }
     case 'profiles':
       await query('list_profiles');
       break;
@@ -117,7 +138,7 @@ async function main() {
       break;
     }
     default:
-      process.stdout.write('hivemind <init|doctor|serve|bridge|agents|profiles|jobs|status|install|approve|clean|configure-agent|coordinate>\n');
+      process.stdout.write('hivemind <init|doctor|start|stop|restart|serve|bridge|agents|profiles|jobs|status|install|approve|clean|configure-agent|coordinate>\n');
       if (command && !['help', '--help'].includes(command)) process.exitCode = 1;
   }
 }
