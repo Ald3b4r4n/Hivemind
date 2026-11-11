@@ -15,7 +15,7 @@ export const effort = id;
 export const complexity = z.enum(['simple', 'normal', 'complex']);
 export const agentSchema = z.strictObject({
   harness: id, roles: z.array(id).min(1), capabilities: z.array(id).default([]),
-  provider: id.optional(), model: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/).optional(),
+  provider: id.optional(), model: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}(?:\[1m\])?$/).optional(),
   effort: effort.default('auto'),
   effortFallback: effort.optional(),
   autoEffort: z.strictObject({ simple: effort, normal: effort, complex: effort }).optional(),

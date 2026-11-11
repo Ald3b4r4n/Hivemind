@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { stringify } from 'yaml';
 import { z } from 'zod';
-import { agentSchema, configSchema, id, matches, secret, type Agent, type Config } from './config.js';
+import { agentSchema, configSchema, id, loadConfig, matches, secret, type Agent, type Config } from './config.js';
 import { createAdapters, type Adapter } from './adapters.js';
 import { Engine } from './engine.js';
 import { errorData, mcp, tools } from './mcp.js';
@@ -31,6 +31,10 @@ async function body(req: IncomingMessage) {
 function saveAgent(dir: string, config: Config, name: string, agent: Agent, redact: (value: string) => string) {
   if (agent.instructions && redact(agent.instructions) !== agent.instructions) {
     throw new Fault('SECRET_IN_CONFIG', 'Retire credenciais das instruções.');
+  }
+  const current = loadConfig(dir);
+  if (JSON.stringify(current) !== JSON.stringify(config)) {
+    throw new Fault('CONFIG_CHANGED', 'agents.yaml mudou no disco. Reinicie o serviço antes de salvar.');
   }
   const next = configSchema.safeParse({ ...config, agents: { ...config.agents, [name]: agent } });
   if (!next.success) throw next.error;

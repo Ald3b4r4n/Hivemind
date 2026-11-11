@@ -50,7 +50,7 @@ export function resolveEffort(adapter: Adapter, agent: Agent, override: string |
 
 const claudeLevels: Record<string, string[]> = Object.fromEntries([
   ...['claude-opus-4-6', 'claude-sonnet-4-6'].map(model => [model, ['low', 'medium', 'high', 'max']]),
-  ...['claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5',
+  ...['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5',
     'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'].map(model =>
     [model, ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']]),
 ]);
@@ -197,8 +197,13 @@ function createAdapter(spec: CliSpec, config: Config): Adapter {
       if (spec.name === 'codex' && !agent.provider && Object.hasOwn(catalogByModel, agent.model)) {
         return { levels: catalogByModel[agent.model], source: 'codex-model-catalog' };
       }
-      if (spec.name === 'claude-code' && probed && compatible && !agent.provider && Object.hasOwn(claudeLevels, agent.model)) {
-        return { levels: levelMap(claudeLevels[agent.model]), source: 'claude-code-official-model-table' };
+      const baseModel = agent.model.replace(/\[1m\]$/, '');
+      const claudeVersion = Number(version?.match(/^2\.1\.(\d+)/)?.[1] ?? 0);
+      const minimum = baseModel === 'claude-fable-5-2' ? 321 : baseModel === 'claude-fable-5-1' ? 257 : 0;
+      if (spec.name === 'claude-code' && probed && compatible && !agent.provider &&
+          Object.hasOwn(claudeLevels, baseModel) && claudeVersion >= minimum) {
+        return { levels: levelMap(claudeLevels[baseModel].filter(level => level !== 'ultracode' || claudeVersion >= 203)),
+          source: 'claude-code-official-model-table' };
       }
       if (spec.name === 'opencode' && Object.hasOwn(catalogByModel, agent.model)) {
         return { levels: catalogByModel[agent.model], source: 'opencode-model-catalog' };

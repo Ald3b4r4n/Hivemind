@@ -113,8 +113,22 @@ test('HTTP e STDIO compartilham jobs, ACL, DAG paralelo, revisão Git e evidênc
   t.after(() => bridge.close());
   const list = await bridge.listTools();
   assert.equal(list.tools.length, 18);
+  const resources = await bridge.listResources();
+  assert.equal(resources.resources[0].uri, 'hivemind://skills/orchestrator');
+  const skill = await bridge.readResource({ uri: 'hivemind://skills/orchestrator' });
+  assert.match(skill.contents[0].text, /hivemind_create_job/);
   const requestKey = key();
   const job = await create({ requestKey });
+  const update = {
+    configurationKey: key(), agentId: 'design',
+    agent: { harness: 'fake', roles: ['architect'], model: 'other-model', effort: 'medium', instructions: 'Review evidence.' },
+  };
+  await call(client, 'configure_agent', update, 'FORBIDDEN');
+  await call(client, 'configure_agent', { ...update, configurationKey: secret(home, 'admin') });
+  const agents = await call(client, 'list_agents', { profile: 'demo' });
+  assert.equal(agents.find(agent => agent.id === 'design').model, 'other-model');
+  assert.match(readFileSync(join(home, 'agents.yaml'), 'utf8'), /model: other-model/);
+  assert.equal((await call(client, 'get_job', job)).team.design.effort, 'auto');
   assert.deepEqual(await create({ requestKey }), job);
   assert.equal((await call(bridge, 'get_job', job)).state, 'CREATED');
   await call(bridge, 'get_job', { ...job, jobKey: key() }, 'JOB_NOT_FOUND');

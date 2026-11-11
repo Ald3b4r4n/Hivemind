@@ -68,8 +68,10 @@ export function mcp(registry: Record<string, Tool>) {
   server.registerResource('hivemind-orchestrator', 'hivemind://skills/orchestrator', {
     title: 'Skill Hivemind Orchestrator', mimeType: 'text/markdown',
   }, uri => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: readFileSync(skill, 'utf8') }] }));
+  const readOnly = new Set(['status', 'list_harnesses', 'list_profiles', 'list_agents', 'get_job', 'get_task', 'get_logs']);
   for (const [name, entry] of Object.entries(registry)) {
-    server.registerTool(name, { description: entry.description, inputSchema: entry.inputSchema }, input => {
+    server.registerTool(name, { description: entry.description, inputSchema: entry.inputSchema,
+      annotations: { readOnlyHint: readOnly.has(name.slice('hivemind_'.length)), openWorldHint: name === 'hivemind_run_task' } }, input => {
       try {
         const data = entry.run(input);
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
