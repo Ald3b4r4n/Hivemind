@@ -1,0 +1,127 @@
+#!/usr/bin/env node
+import { copyFileSync, constants, mkdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
+import { parse } from 'yaml';
+import { createAdapters, resolveEffort } from './adapters.js';
+import { bridge, connect } from './bridge.js';
+import { agentSchema, complexity, dataDir, id, loadConfig, secret } from './config.js';
+import { git, repository } from './git.js';
+import { install } from './install.js';
+import { serve, endpoint } from './server.js';
+
+const [command, ...flags] = process.argv.slice(2);
+const print = (value: unknown) => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
+async function main() {
+  const dir = flags[0] === '--home' && flags[1] ? resolve(flags.splice(0, 2)[1]) : dataDir();
+  const config = loadConfig(dir);
+  async function admin(action: string, input?: unknown) {
+    const response = await fetch(endpoint(config.port) + '/admin/' + action, {
+      method: input ? 'POST' : 'GET',
+      headers: { Authorization: 'Bearer ' + secret(dir, 'admin'), 'Content-Type': 'application/json' },
+      body: input ? JSON.stringify(input) : undefined,
+      signal: AbortSignal.timeout(10_000),
+    });
+    const value = await response.json() as { error?: { code: string; message?: string } };
+    if (!response.ok) throw new Error((value.error?.code ?? response.status) + ' ' + (value.error?.message ?? ''));
+    print(value);
+  }
+  async function query(name: string, args: Record<string, unknown> = {}) {
+    const client = await connect(config.port, secret(dir, 'access'));
+    try {
+      const result = await client.callTool({ name: 'hivemind_' + name, arguments: args });
+      const content = z.array(z.object({ type: z.literal('text'), text: z.string() })).parse(result.content);
+      if (result.isError) throw new Error(content[0]?.text);
+      print(JSON.parse(content[0]?.text ?? 'null'));
+    } finally { await client.close(); }
+  }
+  switch (command) {
+    case 'init': {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const configPath = join(dir, 'agents.yaml');
+      copyFileSync(fileURLToPath(new URL('../configs/agents.example.yaml', import.meta.url)), configPath, constants.COPYFILE_EXCL);
+      print({ config: configPath });
+      break;
+    }
+    case 'serve': {
+      const service = await serve(dir, config);
+      print({ mcp: service.url, home: dir });
+      const close = () => { void service.close().catch(() => { process.exitCode = 1; }); };
+      process.once('SIGINT', close);
+      process.once('SIGTERM', close);
+      break;
+    }
+    case 'bridge':
+      await bridge(config.port, secret(dir, 'access'));
+      break;
+    case 'status':
+      await query('status');
+      break;
+    case 'profiles':
+      await query('list_profiles');
+      break;
+    case 'agents':
+      await query('list_agents', flags[0] ? { profile: id.parse(flags[0]) } : {});
+      break;
+    case 'jobs':
+      await admin('jobs');
+      break;
+    case 'approve':
+      await admin('approve', { jobId: id.parse(flags[0]), taskId: id.parse(flags[1]) });
+      break;
+    case 'clean':
+      await admin('clean', { jobId: id.parse(flags[0]) });
+      break;
+    case 'configure-agent':
+      await admin('agent', { agentId: id.parse(flags[0]), agent: agentSchema.parse(parse(readFileSync(flags[1], 'utf8'))) });
+      break;
+    case 'doctor': {
+      const adapters = createAdapters(config);
+      const reports = await Promise.all([...adapters.values()].map(adapter => adapter.doctor()));
+      let gitVersion: string | undefined;
+      try { gitVersion = git(process.cwd(), '--version'); } catch { /* report absence */ }
+      const profiles = Object.entries(config.profiles).map(([id, profile]) => {
+        try { return { id, ...repository(profile.repository) }; }
+        catch { return { id, error: 'Repositório ausente, sem commit ou fora da raiz.' }; }
+      });
+      const agents = Object.entries(config.agents).map(([id, agent]) => {
+        const adapter = adapters.get(agent.harness);
+        if (!adapter?.availability()) return { id, harness: agent.harness, available: false };
+        try {
+          const resolved = complexity.options.map(level => resolveEffort(adapter, agent, undefined, level));
+          return { id, effortSupport: adapter.efforts(agent), resolved };
+        } catch (error) { return { id, error: (error as Error).message }; }
+      });
+      print({ node: process.version, git: gitVersion, profiles, harnesses: reports, agents });
+      break;
+    }
+    case 'install':
+      print(install(flags[0], flags[1] ?? process.cwd(), dir));
+      break;
+    case 'coordinate': {
+      const [profileId, agentId, objective] = flags;
+      const profile = Object.hasOwn(config.profiles, profileId) ? config.profiles[profileId] : undefined;
+      const agent = profile?.agents.includes(agentId) ? config.agents[agentId] : undefined;
+      if (!profile || !agent?.roles.includes('orchestrator') || !objective) throw new Error('Informe perfil, agente com papel orchestrator e objetivo.');
+      const adapter = createAdapters(config).get(agent.harness);
+      if (!adapter?.coordinate) throw new Error('Abra este harness e carregue a skill manualmente.');
+      await adapter.doctor();
+      const effort = resolveEffort(adapter, agent, undefined, 'complex');
+      process.stderr.write('Effort do coordenador ' + JSON.stringify(effort) + '\n');
+      await adapter.coordinate({
+        cwd: repository(profile.repository).root, agent, effort, mode: 'read',
+        signal: new AbortController().signal, timeout: profile.timeoutMs, log: () => {},
+        prompt: ['Use a skill hivemind-orchestrator e o MCP Hivemind. Perfil: ' + profileId + '.', agent.instructions, objective].filter(Boolean).join('\n'),
+      });
+      break;
+    }
+    default:
+      process.stdout.write('hivemind <init|doctor|serve|bridge|agents|profiles|jobs|status|install|approve|clean|configure-agent|coordinate>\n');
+      if (command && !['help', '--help'].includes(command)) process.exitCode = 1;
+  }
+}
+main().catch(error => {
+  process.stderr.write('Hivemind: ' + (error instanceof Error ? error.message : String(error)) + '\n');
+  process.exitCode = 1;
+});
